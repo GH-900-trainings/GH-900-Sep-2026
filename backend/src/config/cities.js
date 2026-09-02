@@ -54,9 +54,9 @@ export const SUPPORTED_CITIES = Object.freeze([
 
 export const SUPPORTED_CITY_IDS = Object.freeze(SUPPORTED_CITIES.map((city) => city.id));
 
-export const SUPPORTED_COUNTRIES = Object.freeze(
-  SUPPORTED_CITIES.map((city) => city.countryName),
-);
+export const SUPPORTED_COUNTRIES = Object.freeze([
+  ...new Set(SUPPORTED_CITIES.map((city) => city.countryName)),
+]);
 
 // "The Philippines", "philippines" and "PH" all have to resolve to the same entry.
 function normalize(value) {

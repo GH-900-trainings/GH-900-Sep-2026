@@ -85,6 +85,22 @@ describe('HTTP API', () => {
     assert.ok(body.error.supported.includes('The Philippines'));
   });
 
+  it('rejects a blank country', async () => {
+    const response = await fetch(`${baseUrl}/api/weather?city=manila&country=`);
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error.code, 'COUNTRY_INVALID');
+  });
+
+  it('rejects a repeated country parameter', async () => {
+    const response = await fetch(`${baseUrl}/api/weather?city=manila&country=India&country=PH`);
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error.code, 'COUNTRY_INVALID');
+  });
+
   it('rejects a supported city that is not in the requested country', async () => {
     const response = await fetch(`${baseUrl}/api/weather?city=manila&country=India`);
     const body = await response.json();
