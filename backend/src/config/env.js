@@ -24,7 +24,8 @@ if (weatherUnits !== 'metric' && weatherUnits !== 'imperial') {
 export const config = Object.freeze({
   port,
   weatherUnits,
-  subscriptionKey: process.env.AZURE_MAPS_SUBSCRIPTION_KEY ?? '',
+  // AZURE_MAPS_SUBSCRIPTION_KEY is the legacy name and is still honoured.
+  subscriptionKey: process.env.AZURE_MAPS_KEY ?? process.env.AZURE_MAPS_SUBSCRIPTION_KEY ?? '',
   baseUrl: process.env.AZURE_MAPS_BASE_URL ?? 'https://atlas.microsoft.com',
   geocodeApiVersion: process.env.AZURE_MAPS_GEOCODE_API_VERSION ?? '2025-01-01',
   weatherApiVersion: process.env.AZURE_MAPS_WEATHER_API_VERSION ?? '1.1',
@@ -35,7 +36,7 @@ export const config = Object.freeze({
 export function assertConfig() {
   if (!config.subscriptionKey.trim()) {
     throw new Error(
-      'AZURE_MAPS_SUBSCRIPTION_KEY is required. Copy backend/.env.example to backend/.env and set the key.',
+      'AZURE_MAPS_KEY is required. Copy backend/.env.example to backend/.env and set the key.',
     );
   }
 }

@@ -1,6 +1,7 @@
 # GH-900-Sep-2026
 
-Node.js backend that returns current weather for a fixed list of cities, using
+Node.js backend that returns current weather for a fixed list of cities across Australia, Singapore,
+South Africa, The Philippines and India, using
 [Azure Maps](https://learn.microsoft.com/azure/azure-maps/) for both geocoding and weather data.
 
 Each request resolves the city to coordinates with the Azure Maps **Geocoding** API, then reads
@@ -18,12 +19,12 @@ There is no caching layer — every request calls Azure Maps directly.
 ```powershell
 cd backend
 Copy-Item .env.example .env    # macOS/Linux: cp .env.example .env
-# edit .env and set AZURE_MAPS_SUBSCRIPTION_KEY
+# edit .env and set AZURE_MAPS_KEY
 npm install
 npm start
 ```
 
-The server refuses to start if `AZURE_MAPS_SUBSCRIPTION_KEY` is missing. The key is only ever read
+The server refuses to start if `AZURE_MAPS_KEY` is missing. The key is only ever read
 from the environment, is never written to a source file, and is never returned in a response or an
 error message. `.env` is gitignored.
 
@@ -33,7 +34,7 @@ Other scripts: `npm run dev` (restart on change), `npm test`.
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `AZURE_MAPS_SUBSCRIPTION_KEY` | yes | — | Azure Maps shared key |
+| `AZURE_MAPS_KEY` | yes | — | Azure Maps shared key (legacy name `AZURE_MAPS_SUBSCRIPTION_KEY` still works) |
 | `PORT` | no | `3000` | Local listen port |
 | `AZURE_MAPS_BASE_URL` | no | `https://atlas.microsoft.com` | Azure Maps host |
 | `AZURE_MAPS_GEOCODE_API_VERSION` | no | `2025-01-01` | Geocoding API version |
@@ -46,34 +47,59 @@ Other scripts: `npm run dev` (restart on change), `npm test`.
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/health` | Liveness check |
-| GET | `/api/cities` | Supported cities |
-| GET | `/api/weather/:city` | Current weather for one city |
+| GET | `/api/cities` | Reference data (flag, coordinates, time zone) for the supported cities |
+| GET | `/api/weather?city={city}&country={country}` | Current weather for one supported city |
+| GET | `/api/weather/:city` | Same, with the city in the path |
 | GET | `/api/weather` | Current weather for every supported city |
 
-Supported city ids: `bangkok`, `tokyo`, `singapore`, `london`, `new-york`, `sydney`.
-The id is matched against this allowlist, so caller input is never forwarded to Azure Maps.
-An unknown id returns `404` with the list of valid ids.
+| City id | City | Country |
+| --- | --- | --- |
+| `sydney` | Sydney | 🇦🇺 Australia |
+| `singapore` | Singapore | 🇸🇬 Singapore |
+| `cape-town` | Cape Town | 🇿🇦 South Africa |
+| `manila` | Manila | 🇵🇭 The Philippines |
+| `new-delhi` | New Delhi | 🇮🇳 India |
+
+The city is matched against this allowlist, so caller input is never forwarded to Azure Maps.
+`country` is optional and accepts the country name or its ISO code (`PH`, `philippines`,
+`The Philippines`). Errors are returned as `{ "error": { "code", "message" } }`:
+
+| Case | Status | Code |
+| --- | --- | --- |
+| `city` missing or blank | `400` | `CITY_REQUIRED` |
+| Unsupported city | `404` | `CITY_NOT_SUPPORTED` |
+| Unsupported country | `404` | `COUNTRY_NOT_SUPPORTED` |
+| Supported city that is not in the requested country | `400` | `CITY_COUNTRY_MISMATCH` |
 
 ```bash
 curl http://localhost:3000/health
 curl http://localhost:3000/api/cities
-curl http://localhost:3000/api/weather/bangkok
+curl "http://localhost:3000/api/weather?city=manila&country=The%20Philippines"
+curl http://localhost:3000/api/weather/sydney
 curl http://localhost:3000/api/weather
 ```
 
-`GET /api/weather/bangkok` responds with:
+`GET /api/weather?city=manila` responds with:
 
 ```json
 {
-  "city": { "id": "bangkok", "displayName": "Bangkok", "countryRegion": "TH" },
+  "city": {
+    "id": "manila",
+    "displayName": "Manila",
+    "countryRegion": "PH",
+    "countryName": "The Philippines",
+    "flag": "🇵🇭",
+    "coordinates": { "latitude": 14.5995, "longitude": 120.9842 },
+    "timeZone": "Asia/Manila"
+  },
   "location": {
-    "latitude": 13.7563,
-    "longitude": 100.5018,
-    "formattedAddress": "Bangkok, Thailand",
+    "latitude": 14.5995,
+    "longitude": 120.9842,
+    "formattedAddress": "Manila, Philippines",
     "confidence": "High"
   },
   "current": {
-    "observedAt": "2026-09-02T15:08:00+07:00",
+    "observedAt": "2026-09-02T15:08:00+08:00",
     "phrase": "Cloudy",
     "temperature": { "value": 31.4, "unit": "C" },
     "feelsLike": { "value": 36.1, "unit": "C" },
@@ -92,7 +118,7 @@ failing the whole response.
 ```
 backend/
   src/
-    config/     env parsing + the supported-city allowlist
+    config/     env parsing + the supported-city reference data / allowlist
     services/   Azure Maps client, geocoding, weather, orchestration
     routes/     health, cities, weather
     middleware/ async wrapper + central error handler

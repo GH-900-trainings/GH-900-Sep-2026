@@ -1,4 +1,4 @@
-import { SUPPORTED_CITIES } from '../config/cities.js';
+import { SUPPORTED_CITIES, toCityReference } from '../config/cities.js';
 import { geocodeCity } from './geocodingService.js';
 import { getCurrentConditions } from './weatherService.js';
 
@@ -8,7 +8,7 @@ export async function getWeatherForCity(city) {
   const current = await getCurrentConditions(location);
 
   return {
-    city: { id: city.id, displayName: city.displayName, countryRegion: city.countryRegion },
+    city: toCityReference(city),
     location,
     current,
     retrievedAt: new Date().toISOString(),

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
-process.env.AZURE_MAPS_SUBSCRIPTION_KEY = 'test-key-123';
+process.env.AZURE_MAPS_KEY = 'test-key-123';
 process.env.WEATHER_UNITS = 'metric';
 
 const { findCity } = await import('../src/config/cities.js');
@@ -29,8 +29,8 @@ const geocodeResponse = {
   features: [
     {
       type: 'Feature',
-      properties: { address: { formattedAddress: 'Bangkok, Thailand' }, confidence: 'High' },
-      geometry: { type: 'Point', coordinates: [100.5018, 13.7563] },
+      properties: { address: { formattedAddress: 'Singapore' }, confidence: 'High' },
+      geometry: { type: 'Point', coordinates: [103.8198, 1.3521] },
     },
   ],
 };
@@ -59,21 +59,21 @@ describe('geocodeCity', () => {
   it('maps GeoJSON [longitude, latitude] onto the right fields', async () => {
     stubFetch(200, geocodeResponse);
 
-    const location = await geocodeCity(findCity('bangkok'));
+    const location = await geocodeCity(findCity('singapore'));
 
-    assert.equal(location.latitude, 13.7563);
-    assert.equal(location.longitude, 100.5018);
-    assert.equal(location.formattedAddress, 'Bangkok, Thailand');
+    assert.equal(location.latitude, 1.3521);
+    assert.equal(location.longitude, 103.8198);
+    assert.equal(location.formattedAddress, 'Singapore');
   });
 
   it('sends the api-version, the allowlisted query and the subscription key', async () => {
     stubFetch(200, geocodeResponse);
-    await geocodeCity(findCity('bangkok'));
+    await geocodeCity(findCity('singapore'));
 
     const [url] = requestedUrls;
     assert.equal(url.pathname, '/geocode');
     assert.equal(url.searchParams.get('api-version'), '2025-01-01');
-    assert.equal(url.searchParams.get('query'), 'Bangkok, Thailand');
+    assert.equal(url.searchParams.get('query'), 'Singapore');
     assert.equal(url.searchParams.get('subscription-key'), 'test-key-123');
     assert.equal(
       url.searchParams.get('countryRegion'),
@@ -85,25 +85,25 @@ describe('geocodeCity', () => {
   it('fails cleanly when Azure Maps returns no features', async () => {
     stubFetch(200, { type: 'FeatureCollection', features: [] });
 
-    await assert.rejects(() => geocodeCity(findCity('tokyo')), (error) => error.code === 'GEOCODE_NO_RESULT');
+    await assert.rejects(() => geocodeCity(findCity('manila')), (error) => error.code === 'GEOCODE_NO_RESULT');
   });
 });
 
 describe('getCurrentConditions', () => {
   it('queries with "latitude,longitude" order', async () => {
     stubFetch(200, weatherResponse);
-    await getCurrentConditions({ latitude: 13.7563, longitude: 100.5018 });
+    await getCurrentConditions({ latitude: 1.3521, longitude: 103.8198 });
 
     const [url] = requestedUrls;
     assert.equal(url.pathname, '/weather/currentConditions/json');
-    assert.equal(url.searchParams.get('query'), '13.7563,100.5018');
+    assert.equal(url.searchParams.get('query'), '1.3521,103.8198');
     assert.equal(url.searchParams.get('unit'), 'metric');
     assert.equal(url.searchParams.get('api-version'), '1.1');
   });
 
   it('projects the observation onto a trimmed DTO', async () => {
     stubFetch(200, weatherResponse);
-    const current = await getCurrentConditions({ latitude: 13.7563, longitude: 100.5018 });
+    const current = await getCurrentConditions({ latitude: 1.3521, longitude: 103.8198 });
 
     assert.deepEqual(current.temperature, { value: 31.4, unit: 'C' });
     assert.deepEqual(current.feelsLike, { value: 36.1, unit: 'C' });
@@ -123,7 +123,7 @@ describe('Azure Maps error handling', () => {
     stubFetch(401, { error: { code: 'Unauthorized', message: 'Invalid key' } });
 
     await assert.rejects(
-      () => geocodeCity(findCity('london')),
+      () => geocodeCity(findCity('cape-town')),
       (error) => {
         assert.ok(error instanceof AzureMapsError);
         assert.equal(error.httpStatus, 500, '401 upstream must not surface as 401 to our caller');
