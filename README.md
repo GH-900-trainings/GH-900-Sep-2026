@@ -9,7 +9,7 @@ There is no caching layer — every request calls Azure Maps directly.
 
 ## Prerequisites
 
-- Node.js 20 or newer
+- Node.js 24 or newer
 - An Azure Maps account and its subscription key
   (Azure portal → your Azure Maps account → *Authentication* → *Primary Key*)
 
