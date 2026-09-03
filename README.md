@@ -71,6 +71,22 @@ be merged into `main`, alongside its existing rules (pull request required, no f
 branch deletion). The job names are the required check names, so renaming a job means updating the
 ruleset too.
 
+## Security scanning
+
+| File | Purpose |
+| --- | --- |
+| [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly npm update PRs for `backend/` and `frontend/` |
+| [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml) | CodeQL analysis on every push and pull request to `main`, plus a weekly run |
+
+The ruleset requires three checks before a merge into `main`: **Backend tests**, **Frontend tests**
+and **Analyze (javascript-typescript)** (CodeQL).
+
+> **Before merging `codeql.yml`, turn off CodeQL *default setup***
+> (*Settings → Code security → Code scanning → Default setup → Disable*). GitHub refuses to accept
+> results from a committed CodeQL workflow while default setup is enabled, so the analysis job would
+> fail. The workflow deliberately produces the same check name that default setup produces, so the
+> required check keeps passing across the switch.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
