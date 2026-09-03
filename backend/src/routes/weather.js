@@ -2,7 +2,8 @@ import { Router } from 'express';
 
 import { SUPPORTED_CITY_IDS, SUPPORTED_COUNTRIES, findCity, findCountry } from '../config/cities.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { getWeatherForAllCities, getWeatherForCity } from '../services/cityWeatherService.js';
+import { getForecastForCity, getWeatherForAllCities, getWeatherForCity } from '../services/cityWeatherService.js';
+import { MAX_FORECAST_DAYS } from '../services/forecastService.js';
 
 export const weatherRouter = Router();
 
@@ -80,5 +81,30 @@ weatherRouter.get(
     if (!city) return;
 
     res.json(await getWeatherForCity(city));
+  }),
+);
+
+// Returns the requested day count, or writes the error response and returns undefined.
+function resolveDays(res, raw) {
+  if (raw === undefined) return 5;
+
+  const days = typeof raw === 'string' ? Number(raw) : NaN;
+  if (!Number.isInteger(days) || days < 1 || days > MAX_FORECAST_DAYS) {
+    sendError(res, 400, 'DAYS_INVALID', `"days" must be a whole number between 1 and ${MAX_FORECAST_DAYS}.`);
+    return undefined;
+  }
+  return days;
+}
+
+weatherRouter.get(
+  '/forecast/:city',
+  asyncHandler(async (req, res) => {
+    const city = resolveCity(res, req.params.city, req.query.country);
+    if (!city) return;
+
+    const days = resolveDays(res, req.query.days);
+    if (!days) return;
+
+    res.json(await getForecastForCity(city, days));
   }),
 );

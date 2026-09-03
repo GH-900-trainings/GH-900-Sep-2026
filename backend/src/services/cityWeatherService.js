@@ -1,4 +1,5 @@
 import { SUPPORTED_CITIES, toCityReference } from '../config/cities.js';
+import { getDailyForecast } from './forecastService.js';
 import { geocodeCity } from './geocodingService.js';
 import { getCurrentConditions } from './weatherService.js';
 
@@ -11,6 +12,19 @@ export async function getWeatherForCity(city) {
     city: toCityReference(city),
     location,
     current,
+    retrievedAt: new Date().toISOString(),
+  };
+}
+
+export async function getForecastForCity(city, days) {
+  const location = await geocodeCity(city);
+  const forecast = await getDailyForecast(location, days);
+
+  return {
+    city: toCityReference(city),
+    location,
+    summary: forecast.summary,
+    days: forecast.days,
     retrievedAt: new Date().toISOString(),
   };
 }

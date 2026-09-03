@@ -16,6 +16,7 @@ describe('findCity', () => {
 
   it('normalizes case, padding and spaces', () => {
     assert.equal(findCity('  New Delhi ')?.id, 'new-delhi');
+    assert.equal(findCity('MUMBAI')?.id, 'mumbai');
     assert.equal(findCity('CAPE_TOWN')?.id, 'cape-town');
   });
 
@@ -37,6 +38,7 @@ describe('findCity', () => {
 describe('findCountry', () => {
   it('matches a country name, an ISO code and the "The" prefix', () => {
     assert.equal(findCountry('Australia'), 'Australia');
+    assert.equal(findCountry('in'), 'India');
     assert.equal(findCountry('za'), 'South Africa');
     assert.equal(findCountry('philippines'), 'The Philippines');
     assert.equal(findCountry('The Philippines'), 'The Philippines');

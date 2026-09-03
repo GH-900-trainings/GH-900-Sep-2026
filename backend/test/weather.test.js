@@ -8,6 +8,7 @@ const { findCity } = await import('../src/config/cities.js');
 const { AzureMapsError } = await import('../src/errors/AppError.js');
 const { geocodeCity } = await import('../src/services/geocodingService.js');
 const { getCurrentConditions } = await import('../src/services/weatherService.js');
+const { getDailyForecast } = await import('../src/services/forecastService.js');
 
 const realFetch = globalThis.fetch;
 const requestedUrls = [];
@@ -85,7 +86,7 @@ describe('geocodeCity', () => {
   it('fails cleanly when Azure Maps returns no features', async () => {
     stubFetch(200, { type: 'FeatureCollection', features: [] });
 
-    await assert.rejects(() => geocodeCity(findCity('manila')), (error) => error.code === 'GEOCODE_NO_RESULT');
+    await assert.rejects(() => geocodeCity(findCity('new-delhi')), (error) => error.code === 'GEOCODE_NO_RESULT');
   });
 });
 
@@ -118,12 +119,64 @@ describe('getCurrentConditions', () => {
   });
 });
 
+describe('getDailyForecast', () => {
+  const forecastResponse = {
+    summary: { phrase: 'Pleasant Sunday' },
+    forecasts: Array.from({ length: 10 }, (unused, index) => ({
+      date: `2026-09-0${index + 1}T07:00:00+10:00`,
+      temperature: { minimum: { value: 11.8, unit: 'C' }, maximum: { value: 26.3, unit: 'C' } },
+      day: { iconCode: 1, iconPhrase: 'Sunny', precipitationProbability: 1 },
+    })),
+  };
+
+  it('asks Azure Maps for a supported duration and trims to the requested days', async () => {
+    stubFetch(200, forecastResponse);
+
+    const forecast = await getDailyForecast({ latitude: -33.8688, longitude: 151.2093 }, 7);
+
+    const [url] = requestedUrls;
+    assert.equal(url.pathname, '/weather/forecast/daily/json');
+    assert.equal(url.searchParams.get('query'), '-33.8688,151.2093');
+    assert.equal(url.searchParams.get('duration'), '10', '7 is not a valid Azure Maps duration');
+    assert.equal(forecast.days.length, 7);
+    assert.equal(forecast.summary, 'Pleasant Sunday');
+  });
+
+  it('uses the 5-day duration when 5 days are requested', async () => {
+    stubFetch(200, forecastResponse);
+    await getDailyForecast({ latitude: 1.3521, longitude: 103.8198 }, 5);
+
+    assert.equal(requestedUrls[0].searchParams.get('duration'), '5');
+  });
+
+  it('projects each day onto a trimmed DTO', async () => {
+    stubFetch(200, forecastResponse);
+    const forecast = await getDailyForecast({ latitude: 1.3521, longitude: 103.8198 }, 5);
+
+    const [first] = forecast.days;
+    assert.deepEqual(first.minimum, { value: 11.8, unit: 'C' });
+    assert.deepEqual(first.maximum, { value: 26.3, unit: 'C' });
+    assert.equal(first.iconCode, 1);
+    assert.equal(first.phrase, 'Sunny');
+    assert.equal(first.precipitationProbabilityPercent, 1);
+  });
+
+  it('fails cleanly when Azure Maps returns no forecast', async () => {
+    stubFetch(200, { forecasts: [] });
+
+    await assert.rejects(
+      () => getDailyForecast({ latitude: 0, longitude: 0 }, 5),
+      (error) => error.code === 'FORECAST_NO_RESULT',
+    );
+  });
+});
+
 describe('Azure Maps error handling', () => {
   it('throws AzureMapsError without ever exposing the subscription key', async () => {
     stubFetch(401, { error: { code: 'Unauthorized', message: 'Invalid key' } });
 
     await assert.rejects(
-      () => geocodeCity(findCity('cape-town')),
+      () => geocodeCity(findCity('melbourne')),
       (error) => {
         assert.ok(error instanceof AzureMapsError);
         assert.equal(error.httpStatus, 500, '401 upstream must not surface as 401 to our caller');

@@ -13,8 +13,8 @@ const geocodeResponse = {
   features: [
     {
       type: 'Feature',
-      properties: { address: { formattedAddress: 'Manila, Philippines' }, confidence: 'High' },
-      geometry: { type: 'Point', coordinates: [120.9842, 14.5995] },
+      properties: { address: { formattedAddress: 'Mumbai, Maharashtra, India' }, confidence: 'High' },
+      geometry: { type: 'Point', coordinates: [72.8777, 19.076] },
     },
   ],
 };
@@ -47,9 +47,9 @@ describe('HTTP API', () => {
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.cities.length, 5);
+    assert.equal(body.cities.length, 7);
     assert.deepEqual(
-      body.cities.map((city) => city.countryName).sort(),
+      [...new Set(body.cities.map((city) => city.countryName))].sort(),
       ['Australia', 'India', 'Singapore', 'South Africa', 'The Philippines'],
     );
 
@@ -73,20 +73,20 @@ describe('HTTP API', () => {
 
     assert.equal(response.status, 404);
     assert.equal(body.error.code, 'CITY_NOT_SUPPORTED');
-    assert.ok(body.error.supported.includes('manila'));
+    assert.ok(body.error.supported.includes('mumbai'));
   });
 
   it('rejects an unsupported country', async () => {
-    const response = await fetch(`${baseUrl}/api/weather?city=manila&country=Narnia`);
+    const response = await fetch(`${baseUrl}/api/weather?city=mumbai&country=Narnia`);
     const body = await response.json();
 
     assert.equal(response.status, 404);
     assert.equal(body.error.code, 'COUNTRY_NOT_SUPPORTED');
-    assert.ok(body.error.supported.includes('The Philippines'));
+    assert.ok(body.error.supported.includes('India'));
   });
 
   it('rejects a blank country', async () => {
-    const response = await fetch(`${baseUrl}/api/weather?city=manila&country=`);
+    const response = await fetch(`${baseUrl}/api/weather?city=mumbai&country=`);
     const body = await response.json();
 
     assert.equal(response.status, 400);
@@ -94,7 +94,7 @@ describe('HTTP API', () => {
   });
 
   it('rejects a repeated country parameter', async () => {
-    const response = await fetch(`${baseUrl}/api/weather?city=manila&country=India&country=PH`);
+    const response = await fetch(`${baseUrl}/api/weather?city=mumbai&country=India&country=AU`);
     const body = await response.json();
 
     assert.equal(response.status, 400);
@@ -102,7 +102,7 @@ describe('HTTP API', () => {
   });
 
   it('rejects a supported city that is not in the requested country', async () => {
-    const response = await fetch(`${baseUrl}/api/weather?city=manila&country=India`);
+    const response = await fetch(`${baseUrl}/api/weather?city=mumbai&country=Australia`);
     const body = await response.json();
 
     assert.equal(response.status, 400);
@@ -134,13 +134,13 @@ describe('HTTP API', () => {
     };
 
     try {
-      const response = await realFetch(`${baseUrl}/api/weather?city=manila&country=The%20Philippines`);
+      const response = await realFetch(`${baseUrl}/api/weather?city=mumbai&country=India`);
       const body = await response.json();
 
       assert.equal(response.status, 200);
-      assert.equal(body.city.id, 'manila');
-      assert.equal(body.city.countryName, 'The Philippines');
-      assert.equal(body.city.timeZone, 'Asia/Manila');
+      assert.equal(body.city.id, 'mumbai');
+      assert.equal(body.city.countryName, 'India');
+      assert.equal(body.city.timeZone, 'Asia/Kolkata');
       assert.equal(body.current.phrase, 'Cloudy');
     } finally {
       globalThis.fetch = realFetch;
@@ -153,5 +153,21 @@ describe('HTTP API', () => {
 
     assert.equal(response.status, 404);
     assert.equal(body.error.code, 'ROUTE_NOT_FOUND');
+  });
+
+  it('rejects an out-of-range forecast day count', async () => {
+    const response = await fetch(`${baseUrl}/api/forecast/sydney?days=99`);
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error.code, 'DAYS_INVALID');
+  });
+
+  it('rejects an unsupported city on the forecast route', async () => {
+    const response = await fetch(`${baseUrl}/api/forecast/atlantis`);
+    const body = await response.json();
+
+    assert.equal(response.status, 404);
+    assert.equal(body.error.code, 'CITY_NOT_SUPPORTED');
   });
 });
