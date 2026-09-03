@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '27 3 * * 1'
 
 permissions:
   contents: read
@@ -14,6 +16,7 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Quality gates only. A successful run on main triggers cd.yml, which builds and deploys.
 jobs:
   backend:
     name: Backend tests
@@ -62,3 +65,36 @@ jobs:
 
       - name: Run frontend tests
         run: npm test
+
+  # The job name sets the check name ("Analyze (javascript-typescript)") that the main
+  # ruleset requires, and matches the name CodeQL default setup produces.
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # No compilation step: the app is plain JavaScript.
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
