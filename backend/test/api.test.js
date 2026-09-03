@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
-process.env.AZURE_MAPS_KEY = 'test-key-123';
+// Uses the AZURE_MAPS_KEY secret when CI supplies one; no real key is ever committed.
+process.env.AZURE_MAPS_KEY = process.env.AZURE_MAPS_KEY?.trim() || 'test-key-123';
 
 const { default: app } = await import('../src/app.js');
 

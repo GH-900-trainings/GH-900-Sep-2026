@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
-process.env.AZURE_MAPS_KEY = 'test-key-123';
+// Uses the AZURE_MAPS_KEY secret when CI supplies one; no real key is ever committed.
+const AZURE_MAPS_KEY = process.env.AZURE_MAPS_KEY?.trim() || 'test-key-123';
+process.env.AZURE_MAPS_KEY = AZURE_MAPS_KEY;
 process.env.WEATHER_UNITS = 'metric';
 
 const { findCity } = await import('../src/config/cities.js');
@@ -75,7 +77,7 @@ describe('geocodeCity', () => {
     assert.equal(url.pathname, '/geocode');
     assert.equal(url.searchParams.get('api-version'), '2025-01-01');
     assert.equal(url.searchParams.get('query'), 'Singapore');
-    assert.equal(url.searchParams.get('subscription-key'), 'test-key-123');
+    assert.equal(url.searchParams.get('subscription-key'), AZURE_MAPS_KEY);
     assert.equal(
       url.searchParams.get('countryRegion'),
       null,
@@ -180,7 +182,7 @@ describe('Azure Maps error handling', () => {
       (error) => {
         assert.ok(error instanceof AzureMapsError);
         assert.equal(error.httpStatus, 500, '401 upstream must not surface as 401 to our caller');
-        assert.ok(!error.message.includes('test-key-123'));
+        assert.ok(!error.message.includes(AZURE_MAPS_KEY));
         assert.ok(!error.message.includes('subscription-key'));
         return true;
       },

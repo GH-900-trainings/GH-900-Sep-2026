@@ -17,10 +17,11 @@ There is no caching layer — every request calls Azure Maps directly.
 ## Setup
 
 ```powershell
+npm run install:all            # installs backend and frontend dependencies
 cd backend
 Copy-Item .env.example .env    # macOS/Linux: cp .env.example .env
 # edit .env and set AZURE_MAPS_KEY
-npm install
+cd ..
 npm start
 ```
 
@@ -28,7 +29,29 @@ The server refuses to start if `AZURE_MAPS_KEY` is missing. The key is only ever
 from the environment, is never written to a source file, and is never returned in a response or an
 error message. `.env` is gitignored.
 
-Other scripts: `npm run dev` (restart on change), `npm test`.
+Inside `backend/`: `npm run dev` restarts on change.
+
+## Tests
+
+```powershell
+npm test              # backend + frontend
+npm run test:backend
+npm run test:frontend
+```
+
+Both suites use the built-in `node --test` runner and stub every outbound HTTP call, so they need no
+network access and no Azure Maps key.
+
+- **Backend** — response parsing for geocoding, current conditions and the daily forecast, plus route
+  validation for valid and invalid city/country combinations, and a guard that the subscription key
+  never leaks into an error message.
+- **Frontend** — loads `index.html` and `app.js` into [jsdom](https://github.com/jsdom/jsdom) with a
+  stubbed `fetch`, then asserts the dashboard bindings (flag images, weather emoji, temperature) and
+  city-card click navigation into the detail view and back.
+
+The tests read `AZURE_MAPS_KEY` from the environment and fall back to a dummy value when it is
+absent, so [the CI workflow](.github/workflows/ci.yml) can pass the `AZURE_MAPS_KEY` repository
+secret without any key being committed.
 
 ## Configuration
 
@@ -162,6 +185,7 @@ frontend/       dashboard served statically by the backend
   index.html    Bootstrap layout, card templates and the detail view
   app.js        hash routing, data fetching, country grouping, Leaflet map
   styles.css    flat card styling on top of Bootstrap
+  test/         jsdom suites for rendering and navigation
 backend/
   src/
     config/     env parsing + the supported-city reference data / allowlist
