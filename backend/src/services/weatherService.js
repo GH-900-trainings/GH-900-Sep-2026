@@ -27,6 +27,10 @@ export async function getCurrentConditions({ latitude, longitude }) {
     hasPrecipitation: observation.hasPrecipitation ?? null,
     temperature: measurement(observation.temperature),
     feelsLike: measurement(observation.realFeelTemperature),
+    temperatureRange: {
+      minimum: measurement(observation.temperatureSummary?.past24Hours?.minimum),
+      maximum: measurement(observation.temperatureSummary?.past24Hours?.maximum),
+    },
     humidityPercent: observation.relativeHumidity ?? null,
     cloudCoverPercent: observation.cloudCover ?? null,
     uvIndex: observation.uvIndex ?? null,

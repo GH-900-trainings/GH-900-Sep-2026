@@ -50,6 +50,26 @@ export const SUPPORTED_CITIES = Object.freeze([
     coordinates: Object.freeze({ latitude: 28.6139, longitude: 77.209 }),
     timeZone: 'Asia/Kolkata',
   },
+  {
+    id: 'manila',
+    displayName: 'Manila',
+    query: 'Manila, Philippines',
+    countryRegion: 'PH',
+    countryName: 'The Philippines',
+    flag: '🇵🇭',
+    coordinates: Object.freeze({ latitude: 14.5995, longitude: 120.9842 }),
+    timeZone: 'Asia/Manila',
+  },
+  {
+    id: 'cape-town',
+    displayName: 'Cape Town',
+    query: 'Cape Town, South Africa',
+    countryRegion: 'ZA',
+    countryName: 'South Africa',
+    flag: '🇿🇦',
+    coordinates: Object.freeze({ latitude: -33.9249, longitude: 18.4241 }),
+    timeZone: 'Africa/Johannesburg',
+  },
 ].map(Object.freeze));
 
 export const SUPPORTED_CITY_IDS = Object.freeze(SUPPORTED_CITIES.map((city) => city.id));

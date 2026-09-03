@@ -5,6 +5,20 @@
   --border-strong: #c2cbd6;
   --ink: #1f2933;
   --muted: #64748b;
+  --shadow: rgba(31, 41, 51, 0.08);
+  --shadow-strong: rgba(31, 41, 51, 0.14);
+}
+
+/* Lifted charcoal rather than near-black, with opaque cards so they stay readable. */
+[data-bs-theme='dark'] {
+  --page-bg: #23242c;
+  --card-bg: #2e2f3a;
+  --border: #3d3f4c;
+  --border-strong: #565a6b;
+  --ink: #e6e8ec;
+  --muted: #9aa2b1;
+  --shadow: rgba(0, 0, 0, 0.35);
+  --shadow-strong: rgba(0, 0, 0, 0.5);
 }
 
 body {
@@ -13,8 +27,9 @@ body {
 }
 
 .dash-title {
-  font-size: 1.5rem;
+  font-size: 1.6rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .dash-sub,
@@ -55,14 +70,35 @@ body {
 .city-card {
   background: var(--card-bg);
   border: 2px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 1px 3px rgba(31, 41, 51, 0.08);
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  color: inherit;
+  text-decoration: none;
 }
 
 .city-card:hover {
   border-color: var(--border-strong);
-  box-shadow: 0 4px 12px rgba(31, 41, 51, 0.12);
+  box-shadow: 0 6px 16px var(--shadow-strong);
+}
+
+a.city-card:hover {
+  transform: translateY(-2px);
+}
+
+a.city-card:focus-visible {
+  outline: 2px solid #0d6efd;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .city-card {
+    transition: none;
+  }
+
+  a.city-card:hover {
+    transform: none;
+  }
 }
 
 .city-name {
@@ -99,5 +135,132 @@ body {
 }
 
 .city-card.is-unavailable .city-temp {
+  color: var(--muted);
+}
+
+.detail-city {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.detail-country {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.detail-emoji {
+  font-size: 2.5rem;
+  line-height: 1;
+}
+
+.detail-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.detail-stats dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.detail-stats dd {
+  margin: 0;
+  text-align: right;
+}
+
+.detail-observed {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.detail-map {
+  height: 340px;
+  border-radius: 8px;
+}
+
+/* Darkens the standard OSM tiles, avoiding dark tile providers that now require an API key. */
+[data-bs-theme='dark'] .leaflet-tile {
+  filter: invert(1) hue-rotate(180deg) grayscale(0.45) brightness(0.92) contrast(0.9);
+}
+
+[data-bs-theme='dark'] .leaflet-container {
+  background: var(--page-bg);
+}
+
+[data-bs-theme='dark'] .leaflet-control-attribution,
+[data-bs-theme='dark'] .leaflet-bar a,
+[data-bs-theme='dark'] .leaflet-popup-content-wrapper,
+[data-bs-theme='dark'] .leaflet-popup-tip {
+  background: var(--card-bg);
+  color: var(--ink);
+}
+
+[data-bs-theme='dark'] .leaflet-control-attribution a {
+  color: #7fb2ff;
+}
+
+@media (min-width: 992px) {
+  .detail-map {
+    height: 100%;
+    min-height: 340px;
+  }
+}
+
+.section-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.forecast-summary {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.forecast-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 0.75rem;
+}
+
+.forecast-card {
+  background: var(--card-bg);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+.forecast-weekday {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.forecast-date {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.forecast-emoji {
+  font-size: 1.75rem;
+  line-height: 1;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.forecast-range {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.forecast-phrase {
+  font-size: 0.8rem;
+  color: var(--muted);
+  min-height: 2.1em;
+}
+
+.forecast-rain {
+  font-size: 0.8rem;
   color: var(--muted);
 }

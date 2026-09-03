@@ -47,10 +47,10 @@ describe('HTTP API', () => {
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.cities.length, 5);
+    assert.equal(body.cities.length, 7);
     assert.deepEqual(
       [...new Set(body.cities.map((city) => city.countryName))].sort(),
-      ['Australia', 'India', 'Singapore'],
+      ['Australia', 'India', 'Singapore', 'South Africa', 'The Philippines'],
     );
 
     const singapore = body.cities.find((city) => city.id === 'singapore');
@@ -153,5 +153,21 @@ describe('HTTP API', () => {
 
     assert.equal(response.status, 404);
     assert.equal(body.error.code, 'ROUTE_NOT_FOUND');
+  });
+
+  it('rejects an out-of-range forecast day count', async () => {
+    const response = await fetch(`${baseUrl}/api/forecast/sydney?days=99`);
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error.code, 'DAYS_INVALID');
+  });
+
+  it('rejects an unsupported city on the forecast route', async () => {
+    const response = await fetch(`${baseUrl}/api/forecast/atlantis`);
+    const body = await response.json();
+
+    assert.equal(response.status, 404);
+    assert.equal(body.error.code, 'CITY_NOT_SUPPORTED');
   });
 });

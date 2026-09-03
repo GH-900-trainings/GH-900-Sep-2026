@@ -1,7 +1,7 @@
 # GH-900-Sep-2026
 
 Node.js backend and Bootstrap dashboard showing current weather for a fixed list of cities across
-Australia, Singapore and India, using
+Australia, Singapore, India, The Philippines and South Africa, using
 [Azure Maps](https://learn.microsoft.com/azure/azure-maps/) for both geocoding and weather data.
 
 Each request resolves the city to coordinates with the Azure Maps **Geocoding** API, then reads
@@ -51,6 +51,7 @@ Other scripts: `npm run dev` (restart on change), `npm test`.
 | GET | `/api/weather?city={city}&country={country}` | Current weather for one supported city |
 | GET | `/api/weather/:city` | Same, with the city in the path |
 | GET | `/api/weather` | Current weather for every supported city |
+| GET | `/api/forecast/:city?days={1-10}` | Daily forecast, `days` defaults to 5 |
 
 | City id | City | Country |
 | --- | --- | --- |
@@ -59,10 +60,12 @@ Other scripts: `npm run dev` (restart on change), `npm test`.
 | `singapore` | Singapore | Singapore |
 | `mumbai` | Mumbai | India |
 | `new-delhi` | New Delhi | India |
+| `manila` | Manila | The Philippines |
+| `cape-town` | Cape Town | South Africa |
 
 The city is matched against this allowlist, so caller input is never forwarded to Azure Maps.
-`country` is optional and accepts the country name or its ISO code (`IN`, `india`, `India`).
-Errors are returned as `{ "error": { "code", "message" } }`:
+`country` is optional and accepts the country name or its ISO code (`PH`, `philippines`,
+`The Philippines`). Errors are returned as `{ "error": { "code", "message" } }`:
 
 | Case | Status | Code |
 | --- | --- | --- |
@@ -70,6 +73,11 @@ Errors are returned as `{ "error": { "code", "message" } }`:
 | Unsupported city | `404` | `CITY_NOT_SUPPORTED` |
 | Unsupported country | `404` | `COUNTRY_NOT_SUPPORTED` |
 | Supported city that is not in the requested country | `400` | `CITY_COUNTRY_MISMATCH` |
+| `days` outside 1-10 | `400` | `DAYS_INVALID` |
+
+Azure Maps only accepts a `duration` of 1, 5, 10, 15, 25 or 45 days, so `/api/forecast` asks for the
+smallest supported duration that covers `days` and trims the result. A 7-day request is therefore one
+call with `duration=10`.
 
 ```bash
 curl http://localhost:3000/health
@@ -103,6 +111,10 @@ curl http://localhost:3000/api/weather
     "phrase": "Cloudy",
     "temperature": { "value": 31.4, "unit": "C" },
     "feelsLike": { "value": 36.1, "unit": "C" },
+    "temperatureRange": {
+      "minimum": { "value": 27.2, "unit": "C" },
+      "maximum": { "value": 33.8, "unit": "C" }
+    },
     "humidityPercent": 75,
     "wind": { "speed": { "value": 3.6, "unit": "km/h" }, "directionDegrees": 315, "directionLabel": "NW" }
   },
@@ -122,8 +134,23 @@ Cities are grouped under their country with the national flag, and each card sho
 temperature plus a weather emoji derived from the Azure Maps `iconCode`. The layout is Bootstrap 5
 (CDN, with an SRI hash): one card per row on mobile, two from 768px, three from 1200px.
 
-The page calls only `/api/cities` and `/api/weather`. It never talks to Azure Maps directly, so the
-subscription key stays on the server.
+Clicking a city opens its detail view at `#/city/<id>`, which adds the condition description,
+min/max temperature over the last 24 hours, humidity, cloud cover, wind, UV index and visibility,
+plus the city plotted on a [Leaflet](https://leafletjs.com/) map with OpenStreetMap tiles, and a
+**5-day / 7-day forecast** (fetched once at 7 days, so switching between them needs no new request).
+"← Back to dashboard" and the browser Back button both return to the grid.
+
+The header has a light/dark theme toggle built on Bootstrap's `data-bs-theme` colour modes. It
+follows `prefers-color-scheme` on first visit, remembers the choice in `localStorage`, and is applied
+by a tiny inline script before first paint so the page never flashes the wrong theme. In dark mode
+the OpenStreetMap tiles are darkened with a CSS filter, since the dark tile providers now require
+their own API key.
+
+Leaflet is used rather than the Azure Maps Web SDK because the Web SDK needs a credential in the
+browser; OpenStreetMap tiles need none, so the subscription key stays on the server.
+
+The page calls only `/api/cities`, `/api/weather`, `/api/weather/:city` and `/api/forecast/:city`.
+It never talks to Azure Maps directly.
 
 Flags are rendered as images from `flagcdn.com` rather than 🇦🇺-style emoji, because Windows renders
 regional-indicator emoji as plain letters ("AU"), which would show a text acronym instead of a flag.
@@ -132,8 +159,8 @@ regional-indicator emoji as plain letters ("AU"), which would show a text acrony
 
 ```
 frontend/       dashboard served statically by the backend
-  index.html    Bootstrap layout + card templates
-  app.js        fetches /api/cities and /api/weather, groups by country
+  index.html    Bootstrap layout, card templates and the detail view
+  app.js        hash routing, data fetching, country grouping, Leaflet map
   styles.css    flat card styling on top of Bootstrap
 backend/
   src/
