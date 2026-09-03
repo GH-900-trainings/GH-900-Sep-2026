@@ -1,7 +1,7 @@
 # GH-900-Sep-2026
 
-Node.js backend that returns current weather for a fixed list of cities across Australia, Singapore,
-South Africa, The Philippines and India, using
+Node.js backend and Bootstrap dashboard showing current weather for a fixed list of cities across
+Australia, Singapore and India, using
 [Azure Maps](https://learn.microsoft.com/azure/azure-maps/) for both geocoding and weather data.
 
 Each request resolves the city to coordinates with the Azure Maps **Geocoding** API, then reads
@@ -54,15 +54,15 @@ Other scripts: `npm run dev` (restart on change), `npm test`.
 
 | City id | City | Country |
 | --- | --- | --- |
-| `sydney` | Sydney | 🇦🇺 Australia |
-| `singapore` | Singapore | 🇸🇬 Singapore |
-| `cape-town` | Cape Town | 🇿🇦 South Africa |
-| `manila` | Manila | 🇵🇭 The Philippines |
-| `new-delhi` | New Delhi | 🇮🇳 India |
+| `sydney` | Sydney | Australia |
+| `melbourne` | Melbourne | Australia |
+| `singapore` | Singapore | Singapore |
+| `mumbai` | Mumbai | India |
+| `new-delhi` | New Delhi | India |
 
 The city is matched against this allowlist, so caller input is never forwarded to Azure Maps.
-`country` is optional and accepts the country name or its ISO code (`PH`, `philippines`,
-`The Philippines`). Errors are returned as `{ "error": { "code", "message" } }`:
+`country` is optional and accepts the country name or its ISO code (`IN`, `india`, `India`).
+Errors are returned as `{ "error": { "code", "message" } }`:
 
 | Case | Status | Code |
 | --- | --- | --- |
@@ -74,28 +74,28 @@ The city is matched against this allowlist, so caller input is never forwarded t
 ```bash
 curl http://localhost:3000/health
 curl http://localhost:3000/api/cities
-curl "http://localhost:3000/api/weather?city=manila&country=The%20Philippines"
+curl "http://localhost:3000/api/weather?city=mumbai&country=India"
 curl http://localhost:3000/api/weather/sydney
 curl http://localhost:3000/api/weather
 ```
 
-`GET /api/weather?city=manila` responds with:
+`GET /api/weather?city=mumbai` responds with:
 
 ```json
 {
   "city": {
-    "id": "manila",
-    "displayName": "Manila",
-    "countryRegion": "PH",
-    "countryName": "The Philippines",
-    "flag": "🇵🇭",
-    "coordinates": { "latitude": 14.5995, "longitude": 120.9842 },
-    "timeZone": "Asia/Manila"
+    "id": "mumbai",
+    "displayName": "Mumbai",
+    "countryRegion": "IN",
+    "countryName": "India",
+    "flag": "🇮🇳",
+    "coordinates": { "latitude": 19.076, "longitude": 72.8777 },
+    "timeZone": "Asia/Kolkata"
   },
   "location": {
-    "latitude": 14.5995,
-    "longitude": 120.9842,
-    "formattedAddress": "Manila, Philippines",
+    "latitude": 19.076,
+    "longitude": 72.8777,
+    "formattedAddress": "Mumbai, Maharashtra, India",
     "confidence": "High"
   },
   "current": {
@@ -113,9 +113,28 @@ curl http://localhost:3000/api/weather
 `GET /api/weather` uses `Promise.allSettled`, so one failing city is reported in `errors` instead of
 failing the whole response.
 
+## Dashboard
+
+Start the backend and open <http://localhost:3000/> — Express serves the dashboard from `frontend/`,
+so it is same-origin with the API.
+
+Cities are grouped under their country with the national flag, and each card shows the current
+temperature plus a weather emoji derived from the Azure Maps `iconCode`. The layout is Bootstrap 5
+(CDN, with an SRI hash): one card per row on mobile, two from 768px, three from 1200px.
+
+The page calls only `/api/cities` and `/api/weather`. It never talks to Azure Maps directly, so the
+subscription key stays on the server.
+
+Flags are rendered as images from `flagcdn.com` rather than 🇦🇺-style emoji, because Windows renders
+regional-indicator emoji as plain letters ("AU"), which would show a text acronym instead of a flag.
+
 ## Project layout
 
 ```
+frontend/       dashboard served statically by the backend
+  index.html    Bootstrap layout + card templates
+  app.js        fetches /api/cities and /api/weather, groups by country
+  styles.css    flat card styling on top of Bootstrap
 backend/
   src/
     config/     env parsing + the supported-city reference data / allowlist

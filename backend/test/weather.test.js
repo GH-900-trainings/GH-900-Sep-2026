@@ -85,7 +85,7 @@ describe('geocodeCity', () => {
   it('fails cleanly when Azure Maps returns no features', async () => {
     stubFetch(200, { type: 'FeatureCollection', features: [] });
 
-    await assert.rejects(() => geocodeCity(findCity('manila')), (error) => error.code === 'GEOCODE_NO_RESULT');
+    await assert.rejects(() => geocodeCity(findCity('new-delhi')), (error) => error.code === 'GEOCODE_NO_RESULT');
   });
 });
 
@@ -123,7 +123,7 @@ describe('Azure Maps error handling', () => {
     stubFetch(401, { error: { code: 'Unauthorized', message: 'Invalid key' } });
 
     await assert.rejects(
-      () => geocodeCity(findCity('cape-town')),
+      () => geocodeCity(findCity('melbourne')),
       (error) => {
         assert.ok(error instanceof AzureMapsError);
         assert.equal(error.httpStatus, 500, '401 upstream must not surface as 401 to our caller');

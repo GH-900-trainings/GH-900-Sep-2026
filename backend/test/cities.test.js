@@ -16,7 +16,7 @@ describe('findCity', () => {
 
   it('normalizes case, padding and spaces', () => {
     assert.equal(findCity('  New Delhi ')?.id, 'new-delhi');
-    assert.equal(findCity('CAPE_TOWN')?.id, 'cape-town');
+    assert.equal(findCity('MUMBAI')?.id, 'mumbai');
   });
 
   it('returns undefined for unsupported or non-string input', () => {
@@ -35,11 +35,11 @@ describe('findCity', () => {
 });
 
 describe('findCountry', () => {
-  it('matches a country name, an ISO code and the "The" prefix', () => {
+  it('matches a country name and an ISO code', () => {
     assert.equal(findCountry('Australia'), 'Australia');
-    assert.equal(findCountry('za'), 'South Africa');
-    assert.equal(findCountry('philippines'), 'The Philippines');
-    assert.equal(findCountry('The Philippines'), 'The Philippines');
+    assert.equal(findCountry('in'), 'India');
+    assert.equal(findCountry('sg'), 'Singapore');
+    assert.equal(findCountry('india'), 'India');
   });
 
   it('returns undefined for unsupported or non-string input', () => {
@@ -50,11 +50,8 @@ describe('findCountry', () => {
 });
 
 describe('reference data', () => {
-  it('covers the five supported countries', () => {
-    assert.deepEqual(
-      [...SUPPORTED_COUNTRIES].sort(),
-      ['Australia', 'India', 'Singapore', 'South Africa', 'The Philippines'],
-    );
+  it('covers the three supported countries', () => {
+    assert.deepEqual([...SUPPORTED_COUNTRIES].sort(), ['Australia', 'India', 'Singapore']);
   });
 
   it('carries a flag, coordinates and a time zone for every city', () => {

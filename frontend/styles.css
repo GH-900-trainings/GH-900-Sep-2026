@@ -1,0 +1,103 @@
+:root {
+  --page-bg: #f4f6f8;
+  --card-bg: #ffffff;
+  --border: #d7dde5;
+  --border-strong: #c2cbd6;
+  --ink: #1f2933;
+  --muted: #64748b;
+}
+
+body {
+  background: var(--page-bg);
+  color: var(--ink);
+}
+
+.dash-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.dash-sub,
+.dash-loading {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.dash-updated {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.country-head {
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.country-flag {
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.country-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.country-count {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+}
+
+.city-card {
+  background: var(--card-bg);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(31, 41, 51, 0.08);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.city-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 12px rgba(31, 41, 51, 0.12);
+}
+
+.city-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.city-emoji {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.city-temp {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.city-phrase {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.city-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.city-card.is-unavailable {
+  border-style: dashed;
+}
+
+.city-card.is-unavailable .city-temp {
+  color: var(--muted);
+}
