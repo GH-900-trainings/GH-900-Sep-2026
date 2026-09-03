@@ -1,0 +1,225 @@
+name: CD
+
+# `needs:` cannot span workflows, so the gate is the CI run itself: this only starts once
+# CI has finished successfully on main.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never let two releases overlap, and never cancel one midway.
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # In a workflow_run context `github.sha` is the default branch head, not the commit that
+  # was tested, so the triggering commit has to be carried through explicitly.
+  DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  BACKEND_PORT: '3000'
+  FRONTEND_PORT: '8080'
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-gh900-weather' }}
+  LOCATION: ${{ vars.AZURE_LOCATION || 'southeastasia' }}
+  ENVIRONMENT_NAME: ${{ vars.AZURE_CONTAINERAPP_ENV || 'cae-gh900-weather' }}
+  BACKEND_APP: gh900-weather-backend
+  FRONTEND_APP: gh900-weather-frontend
+
+# Stages run in order: package -> infrastructure -> release -> verify.
+jobs:
+  # ----- Stage 1: package -----
+
+  images:
+    name: Push ${{ matrix.component }} image
+    # A scheduled CodeQL run also completes CI, but only a push should ship a release.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        component: [backend, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GitHub Packages
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # metadata-action lowercases the repository name, which ghcr.io requires.
+          images: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.component }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=sha-${{ env.DEPLOY_SHA }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ----- Stage 2: infrastructure -----
+
+  provision:
+    name: Provision environment
+    needs: images
+    runs-on: ubuntu-latest
+
+    outputs:
+      backend-image: ${{ steps.refs.outputs.backend }}
+      frontend-image: ${{ steps.refs.outputs.frontend }}
+
+    steps:
+      - name: Resolve image references
+        id: refs
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "backend=${REGISTRY}/${repo}-backend:sha-${DEPLOY_SHA}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${REGISTRY}/${repo}-frontend:sha-${DEPLOY_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure the Container Apps environment exists
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          # The deployment identity is Contributor on the resource group only, so it cannot
+          # create the group itself; that is a one-time setup step (see the README).
+          if ! az group show -n "$RESOURCE_GROUP" -o none 2>/dev/null; then
+            echo "Resource group '$RESOURCE_GROUP' not found. Create it and scope the deployment service principal to it." >&2
+            exit 1
+          fi
+          if ! az containerapp env show -n "$ENVIRONMENT_NAME" -g "$RESOURCE_GROUP" -o none 2>/dev/null; then
+            az containerapp env create -n "$ENVIRONMENT_NAME" -g "$RESOURCE_GROUP" -l "$LOCATION" -o none
+          fi
+
+  # ----- Stage 3: release -----
+
+  deploy-backend:
+    name: Deploy backend
+    needs: provision
+    runs-on: ubuntu-latest
+    environment: production
+
+    outputs:
+      fqdn: ${{ steps.deploy.outputs.fqdn }}
+
+    steps:
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create or update the backend app
+        id: deploy
+        env:
+          IMAGE: ${{ needs.provision.outputs.backend-image }}
+          MAPS_KEY: ${{ secrets.AZURE_MAPS_KEY }}
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          if az containerapp show -n "$BACKEND_APP" -g "$RESOURCE_GROUP" -o none 2>/dev/null; then
+            az containerapp secret set -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+              --secrets azure-maps-key="$MAPS_KEY" -o none
+            az containerapp update -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+              --image "$IMAGE" --set-env-vars AZURE_MAPS_KEY=secretref:azure-maps-key -o none
+          else
+            az containerapp create -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+              --environment "$ENVIRONMENT_NAME" --image "$IMAGE" \
+              --target-port "$BACKEND_PORT" --ingress external \
+              --secrets azure-maps-key="$MAPS_KEY" \
+              --env-vars AZURE_MAPS_KEY=secretref:azure-maps-key \
+              --min-replicas 1 --max-replicas 3 -o none
+          fi
+          fqdn=$(az containerapp show -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "fqdn=$fqdn" >> "$GITHUB_OUTPUT"
+
+  deploy-frontend:
+    name: Deploy frontend
+    needs: [provision, deploy-backend]
+    runs-on: ubuntu-latest
+    environment: production
+
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create or update the frontend app
+        id: deploy
+        env:
+          IMAGE: ${{ needs.provision.outputs.frontend-image }}
+          # nginx proxies /api here, which keeps the dashboard same-origin with the API.
+          BACKEND_URL: https://${{ needs.deploy-backend.outputs.fqdn }}
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          if az containerapp show -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" -o none 2>/dev/null; then
+            az containerapp update -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
+              --image "$IMAGE" --set-env-vars "BACKEND_URL=$BACKEND_URL" -o none
+          else
+            az containerapp create -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
+              --environment "$ENVIRONMENT_NAME" --image "$IMAGE" \
+              --target-port "$FRONTEND_PORT" --ingress external \
+              --env-vars "BACKEND_URL=$BACKEND_URL" \
+              --min-replicas 1 --max-replicas 3 -o none
+          fi
+          fqdn=$(az containerapp show -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
+
+  # ----- Stage 4: verify -----
+
+  smoke-test:
+    name: Smoke test
+    needs: deploy-frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check the dashboard serves API data through the proxy
+        env:
+          URL: ${{ needs.deploy-frontend.outputs.url }}
+        run: |
+          for attempt in $(seq 1 10); do
+            if curl -fsS "${URL}/api/cities" >/dev/null; then
+              echo "Dashboard is live at ${URL}"
+              echo "### Deployed: ${URL}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Attempt ${attempt} failed, retrying in 15s"
+            sleep 15
+          done
+          echo "The deployment did not become healthy in time" >&2
+          exit 1

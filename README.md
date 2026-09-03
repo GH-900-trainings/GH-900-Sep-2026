@@ -56,7 +56,7 @@ secret without any key being committed.
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request to `main`,
-on `ubuntu-latest`, as two parallel jobs:
+on `ubuntu-latest`, as three parallel jobs:
 
 | Job | Runs |
 | --- | --- |
@@ -64,8 +64,8 @@ on `ubuntu-latest`, as two parallel jobs:
 | **Frontend tests** | `npm ci` then `npm test` in `frontend/` |
 | **Analyze (javascript-typescript)** | CodeQL security analysis |
 
-Both jobs cache npm downloads with `actions/setup-node`'s `cache: npm`, keyed on that package's
-`package-lock.json`.
+Both test jobs cache npm downloads with `actions/setup-node`'s `cache: npm`, keyed on that package's
+`package-lock.json`. Deployment lives separately in [`cd.yml`](.github/workflows/cd.yml).
 
 The `protect-the-main-branch` repository ruleset requires both jobs to pass before a pull request can
 be merged into `main`, alongside its existing rules (pull request required, no force pushes, no
@@ -82,9 +82,6 @@ ruleset too.
 The ruleset requires three checks before a merge into `main`: **Backend tests**, **Frontend tests**
 and **Analyze (javascript-typescript)** (CodeQL).
 
-CodeQL lives inside `ci.yml` rather than its own workflow because `needs:` cannot span workflows, and
-the release jobs must wait for the security scan.
-
 > **Before merging, turn off CodeQL *default setup***
 > (*Settings → Code security → Code scanning → Default setup → Disable*). GitHub refuses to accept
 > results from a committed CodeQL workflow while default setup is enabled, so the analysis job would
@@ -93,16 +90,27 @@ the release jobs must wait for the security scan.
 
 ## Containers and deployment
 
-`main` builds two images and deploys them to Azure Container Apps. The release jobs use `needs:` so
-they only start after **Backend tests**, **Frontend tests** and **CodeQL** have all succeeded:
+`main` builds two images and deploys them to Azure Container Apps. The pipeline is split across two
+workflows:
 
 ```
-backend ─┐
-frontend ─┼─> images (build + push to GHCR) ─> deploy (Container Apps)
-analyze ─┘
+ci.yml  (push / PR / weekly)          cd.yml  (workflow_run: CI succeeded on main)
+
+Backend tests  ─┐                     images ──> provision ──> deploy-backend  ─┐
+Frontend tests ─┼─ all must pass ──>  (matrix)                      │           ├─> smoke-test
+CodeQL         ─┘                                                   └─> deploy-frontend
 ```
 
-`images` and `deploy` are skipped on pull requests — they only run on a push to `main`.
+`needs:` cannot span workflow files, so the CI → CD link is a `workflow_run` trigger: `cd.yml` starts
+only when `ci.yml` completes with `conclusion == success` on `main`, and only when that CI run came
+from a push (so the weekly CodeQL scan does not redeploy). Inside `cd.yml` the stages are chained
+with `needs:`, and the backend's hostname reaches the frontend job as a job output, which is what
+`BACKEND_URL` in the nginx proxy is set to.
+
+`cd.yml` also accepts `workflow_dispatch`, so a release can be re-run by hand without a new commit.
+
+> `workflow_run` workflows only fire once they exist on the **default branch**, so the first
+> deployment happens after `cd.yml` is merged into `main`.
 
 | Image | Base | Serves |
 | --- | --- | --- |
@@ -125,6 +133,14 @@ Azure Maps key never leaves the backend.
    az ad sp create-for-rbac --name gh900-weather-deploy --role contributor `
      --scopes "/subscriptions/$sub/resourceGroups/rg-gh900-weather" --json-auth |
      gh secret set AZURE_CREDENTIALS --repo <owner>/<repo>
+   ```
+
+   The service principal is Contributor **on that resource group only**, so it cannot create the
+   group or register resource providers. Both are one-time steps for a subscription owner:
+
+   ```powershell
+   az provider register -n Microsoft.App
+   az provider register -n Microsoft.OperationalInsights
    ```
 
 2. Add the Azure Maps key as a secret so the backend container can read it:
