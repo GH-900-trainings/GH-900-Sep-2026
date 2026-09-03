@@ -53,6 +53,24 @@ The tests read `AZURE_MAPS_KEY` from the environment and fall back to a dummy va
 absent, so [the CI workflow](.github/workflows/ci.yml) can pass the `AZURE_MAPS_KEY` repository
 secret without any key being committed.
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request to `main`,
+on `ubuntu-latest`, as two parallel jobs:
+
+| Job | Runs |
+| --- | --- |
+| **Backend tests** | `npm ci` then `npm test` in `backend/`, with `AZURE_MAPS_KEY` from repository secrets |
+| **Frontend tests** | `npm ci` then `npm test` in `frontend/` |
+
+Both jobs cache npm downloads with `actions/setup-node`'s `cache: npm`, keyed on that package's
+`package-lock.json`.
+
+The `protect-the-main-branch` repository ruleset requires both jobs to pass before a pull request can
+be merged into `main`, alongside its existing rules (pull request required, no force pushes, no
+branch deletion). The job names are the required check names, so renaming a job means updating the
+ruleset too.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
