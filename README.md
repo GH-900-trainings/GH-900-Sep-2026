@@ -1,309 +1,419 @@
-# GH-900-Sep-2026
+# GH-900 · DevOps & GitHub Foundations Notes
 
-Node.js backend and Bootstrap dashboard showing current weather for a fixed list of cities across
-Australia, Singapore, India, The Philippines and South Africa, using
-[Azure Maps](https://learn.microsoft.com/azure/azure-maps/) for both geocoding and weather data.
+A working sample application used to teach GitHub end to end: **issues → branches → pull requests →
+automated checks → security scanning → deployment.**
 
-Each request resolves the city to coordinates with the Azure Maps **Geocoding** API, then reads
-**current conditions** from the Azure Maps **Weather** API with those coordinates.
-There is no caching layer — every request calls Azure Maps directly.
+Everything described here is real and live in this repository — the screenshots, PR numbers and URLs
+are not made up. Read this top to bottom and you will have seen a complete DevOps loop.
 
-## Prerequisites
+> ### 📚 Class recaps
+>
+> | | Covers |
+> | --- | --- |
+> | **[Day 1 Recap](Day1-Recap.md)** | Git vs GitHub, repositories, branches, issues, Organizations, Projects, Copilot, security basics |
+> | **[Day 2 Recap](Day2-Recap.md)** | Open source & InnerSource, CodeQL, Dependabot, secret scanning, authentication, Actions, exam focus |
+>
+> The recaps are the *concepts*. This README is those concepts *applied* to a real application.
 
-- Node.js 24 or newer
-- An Azure Maps account and its subscription key
-  (Azure portal → your Azure Maps account → *Authentication* → *Primary Key*)
+---
 
-## Setup
+## Contents
 
-```powershell
-npm run install:all            # installs backend and frontend dependencies
-cd backend
-Copy-Item .env.example .env    # macOS/Linux: cp .env.example .env
-# edit .env and set AZURE_MAPS_KEY
-cd ..
-npm start
+1. [What you will learn](#1-what-you-will-learn)
+2. [The application](#2-the-application)
+3. [Run it yourself](#3-run-it-yourself)
+4. [Working in GitHub](#4-working-in-github) — repo, issues, branches, PRs, projects
+5. [Security](#5-security)
+6. [The pipeline (CI/CD)](#6-the-pipeline-cicd)
+7. [Reference](#7-reference)
+
+---
+
+## 1. What you will learn
+
+| GitHub concept | Where you can see it in this repo |
+| --- | --- |
+| **Repository** | Code, README, history, settings — the unit everything else hangs off |
+| **Issues** | Epics `#2 #5 #8 #11` broken into Sub-Tasks `#3 #4 #6 #7 #9 #10 #12 #13` |
+| **Branches** | One branch per Epic, e.g. `epic-2-Frontend`, `epic-4-security-deployment` |
+| **Pull requests** | `#14 #15 #17 #18` — every change reached `main` through one |
+| **Projects** | Board view of the Epics/Sub-Tasks above |
+| **Actions** | `ci.yml` (tests + scan) and `cd.yml` (build + deploy) |
+| **Rulesets / branch protection** | `main` cannot be pushed to directly; three checks must pass |
+| **Security** | Dependabot, CodeQL, encrypted secrets |
+| **Packages** | Two container images published to GitHub Container Registry |
+
+---
+
+## 2. The application
+
+A weather dashboard showing current conditions for **7 cities across 5 countries** (Australia,
+Singapore, India, The Philippines, South Africa). Click a city for a detail view with a map and a
+5 / 7-day forecast. Light and dark themes.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    subgraph browser["🌐 Browser"]
+        UI["Dashboard<br/>Bootstrap 5 + Leaflet"]
+    end
+
+    subgraph aca["☁️ Azure Container Apps"]
+        FE["<b>frontend</b> container<br/>nginx :8080<br/>static files + /api proxy"]
+        BE["<b>backend</b> container<br/>Express :3000<br/>REST API"]
+    end
+
+    subgraph maps["🗺️ Azure Maps"]
+        GEO["Geocoding API<br/>city ➜ lat/lon"]
+        WX["Weather API<br/>current + forecast"]
+    end
+
+    UI -->|"HTML, CSS, JS"| FE
+    UI -->|"/api/weather/sydney"| FE
+    FE -->|"proxy_pass"| BE
+    BE -->|"subscription key"| GEO
+    BE --> WX
+
+    style FE fill:#e8f0fe,stroke:#4285f4,stroke-width:2px
+    style BE fill:#e6f4ea,stroke:#34a853,stroke-width:2px
 ```
 
-The server refuses to start if `AZURE_MAPS_KEY` is missing. The key is only ever read
-from the environment, is never written to a source file, and is never returned in a response or an
-error message. `.env` is gitignored.
+**Why two containers, and why the proxy?** The browser only ever talks to the frontend. nginx serves
+the page *and* forwards `/api/*` to the backend. Two consequences worth understanding:
 
-Inside `backend/`: `npm run dev` restarts on change.
+- **The Azure Maps subscription key never reaches the browser.** Only the backend holds it. If the
+  page called Azure Maps directly, anyone could open DevTools and steal the key.
+- **No CORS to configure.** The page and the API share one origin, so the browser raises no
+  cross-origin objection.
 
-## Tests
+### Request flow
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant N as nginx (frontend)
+    participant E as Express (backend)
+    participant A as Azure Maps
+
+    B->>N: GET /api/weather/sydney
+    N->>E: proxy_pass → /api/weather/sydney
+    E->>A: GET /geocode?query=Sydney, NSW, Australia
+    A-->>E: [longitude, latitude]
+    E->>A: GET /weather/currentConditions?query=lat,lon
+    A-->>E: temperature, iconCode, wind…
+    E-->>N: trimmed JSON (no key, no raw payload)
+    N-->>B: 200 OK
+```
+
+### Components
+
+| Component | Technology | Responsibility |
+| --- | --- | --- |
+| `frontend/index.html`, `app.js`, `styles.css` | Bootstrap 5, Leaflet | Rendering, hash routing (`#/city/<id>`), theme toggle |
+| `frontend/nginx.conf.template` | nginx | Serves static files, proxies `/api` |
+| `backend/src/routes/` | Express | HTTP layer, input validation |
+| `backend/src/services/` | Node | Azure Maps calls, response mapping |
+| `backend/src/config/` | Node | Env parsing, the supported-city allowlist |
+
+> **Security detail:** the city in the URL is matched against an allowlist. User input is never
+> forwarded to Azure Maps, which prevents a caller from steering our server at arbitrary URLs
+> (server-side request forgery).
+
+---
+
+## 3. Run it yourself
+
+**Prerequisites:** Node.js 24+, and an Azure Maps account key
+(*Azure portal → your Azure Maps account → Authentication → Primary Key*).
 
 ```powershell
-npm test              # backend + frontend
+git clone https://github.com/GH-900-trainings/GH-900-Sep-2026.git
+cd GH-900-Sep-2026
+npm run install:all
+
+cd backend
+Copy-Item .env.example .env     # macOS/Linux: cp .env.example .env
+# open .env and set AZURE_MAPS_KEY=<your key>
+cd ..
+
+npm start                        # http://localhost:3000
+```
+
+Locally the backend serves the dashboard itself, so you only run one process. In Azure they are two
+containers — that is the only difference between the two setups.
+
+```powershell
+npm test              # all 48 tests: 35 backend + 13 frontend
 npm run test:backend
 npm run test:frontend
 ```
 
-Both suites use the built-in `node --test` runner and stub every outbound HTTP call, so they need no
-network access and no Azure Maps key.
+The tests stub every outbound call, so **they need no network and no Azure Maps key.**
 
-- **Backend** — response parsing for geocoding, current conditions and the daily forecast, plus route
-  validation for valid and invalid city/country combinations, and a guard that the subscription key
-  never leaks into an error message.
-- **Frontend** — loads `index.html` and `app.js` into [jsdom](https://github.com/jsdom/jsdom) with a
-  stubbed `fetch`, then asserts the dashboard bindings (flag images, weather emoji, temperature) and
-  city-card click navigation into the detail view and back.
+> The server refuses to start without `AZURE_MAPS_KEY`. That is deliberate — failing loudly at
+> startup beats a confusing 500 on the first request. `.env` is gitignored, so a real key can never
+> be committed.
 
-The tests read `AZURE_MAPS_KEY` from the environment and fall back to a dummy value when it is
-absent, so [the CI workflow](.github/workflows/ci.yml) can pass the `AZURE_MAPS_KEY` repository
-secret without any key being committed.
+---
 
-## Continuous integration
+## 4. Working in GitHub
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request to `main`,
-on `ubuntu-latest`, as three parallel jobs:
+### 4.1 Issues — planning the work
 
-| Job | Runs |
-| --- | --- |
-| **Backend tests** | `npm ci` then `npm test` in `backend/`, with `AZURE_MAPS_KEY` from repository secrets |
-| **Frontend tests** | `npm ci` then `npm test` in `frontend/` |
-| **Analyze (javascript-typescript)** | CodeQL security analysis |
+Work is described *before* it is written. This repo uses two levels:
 
-Both test jobs cache npm downloads with `actions/setup-node`'s `cache: npm`, keyed on that package's
-`package-lock.json`. Deployment lives separately in [`cd.yml`](.github/workflows/cd.yml).
+- **Epic** — a big outcome, e.g. `#5 [Epic 2] Frontend - Country & City Weather Dashboard`
+- **Sub-Task** — one shippable slice, e.g. `#6 Sub-Task 2.1: Dashboard - Bootstrap UI, Flags & Emoji Weather`
 
-The `protect-the-main-branch` repository ruleset requires both jobs to pass before a pull request can
-be merged into `main`, alongside its existing rules (pull request required, no force pushes, no
-branch deletion). The job names are the required check names, so renaming a job means updating the
-ruleset too.
+Each Sub-Task carries **acceptance criteria** — a checklist that defines "done". This is what makes a
+pull request reviewable: a reviewer checks the code against the criteria instead of guessing intent.
 
-## Security scanning
+### 4.2 Branches — where the work happens
 
-| File | Purpose |
-| --- | --- |
-| [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly npm update PRs for `backend/` and `frontend/` |
-| `analyze` job in [`ci.yml`](.github/workflows/ci.yml) | CodeQL analysis on every push and pull request to `main`, plus a weekly run |
+`main` is always deployable. Nobody commits to it directly. Each Epic gets a branch, work happens
+there, and it returns through a pull request.
 
-The ruleset requires three checks before a merge into `main`: **Backend tests**, **Frontend tests**
-and **Analyze (javascript-typescript)** (CodeQL).
-
-> **Before merging, turn off CodeQL *default setup***
-> (*Settings → Code security → Code scanning → Default setup → Disable*). GitHub refuses to accept
-> results from a committed CodeQL workflow while default setup is enabled, so the analysis job would
-> fail. The workflow deliberately produces the same check name that default setup produces, so the
-> required check keeps passing across the switch.
-
-## Containers and deployment
-
-`main` builds two images and deploys them to Azure Container Apps. The pipeline is split across two
-workflows:
-
-```
-ci.yml  (push / PR / weekly)          cd.yml  (workflow_run: CI succeeded on main)
-
-Backend tests  ─┐                     images ──> provision ──> deploy-backend  ─┐
-Frontend tests ─┼─ all must pass ──>  (matrix)                      │           ├─> smoke-test
-CodeQL         ─┘                                                   └─> deploy-frontend
+```mermaid
+gitGraph
+    commit id: "initial commit"
+    commit id: "1.1 base server + Azure Maps"
+    branch copilot/gh-900-setup-rest-api-endpoints
+    commit id: "1.2 REST endpoints + secrets"
+    checkout main
+    merge copilot/gh-900-setup-rest-api-endpoints tag: "PR #14"
+    branch epic-2-Frontend
+    commit id: "2.1 dashboard, flags, emoji"
+    commit id: "2.2 city detail + map"
+    checkout main
+    merge epic-2-Frontend tag: "PR #15"
+    branch epic-3-Test-Enable-Pipeline
+    commit id: "3.1 unit tests"
+    commit id: "3.2 ci.yml"
+    checkout main
+    merge epic-3-Test-Enable-Pipeline tag: "PR #17"
+    branch epic-4-security-deployment
+    commit id: "4.1 dependabot + codeql"
+    commit id: "4.2 dockerfiles + cd.yml"
+    checkout main
+    merge epic-4-security-deployment tag: "PR #18"
 ```
 
-`needs:` cannot span workflow files, so the CI → CD link is a `workflow_run` trigger: `cd.yml` starts
-only when `ci.yml` completes with `conclusion == success` on `main`, and only when that CI run came
-from a push (so the weekly CodeQL scan does not redeploy). Inside `cd.yml` the stages are chained
-with `needs:`, and the backend's hostname reaches the frontend job as a job output, which is what
-`BACKEND_URL` in the nginx proxy is set to.
+Read that diagram as: **the blue line is always releasable; the coloured lines are work in progress.**
+A branch is cheap and isolated — you can break things on it without breaking anyone else.
 
-`cd.yml` also accepts `workflow_dispatch`, so a release can be re-run by hand without a new commit.
+### 4.3 Pull requests — how work gets reviewed and merged
 
-> `workflow_run` workflows only fire once they exist on the **default branch**, so the first
-> deployment happens after `cd.yml` is merged into `main`.
+A pull request says "please merge this branch into `main`". It is where review, discussion and the
+automated checks all meet.
 
-| Image | Base | Serves |
+```mermaid
+flowchart LR
+    A["Create branch<br/>from main"] --> B["Commit work"]
+    B --> C["Open pull request"]
+    C --> D{"CI checks<br/>pass?"}
+    D -->|no| B
+    D -->|yes| E["Review"]
+    E -->|changes requested| B
+    E -->|approved| F["Merge to main"]
+    F --> G["CD deploys"]
+
+    style D fill:#fef7e0,stroke:#f9ab00,stroke-width:2px
+    style G fill:#e6f4ea,stroke:#34a853,stroke-width:2px
+```
+
+### 4.4 Rulesets — enforcing the process
+
+Good intentions are not a process. The `protect-the-main-branch` **ruleset** makes the rules
+mechanical:
+
+| Rule | Effect |
+| --- | --- |
+| Pull request required | No direct pushes to `main` |
+| Required status checks | `Backend tests`, `Frontend tests`, `Analyze (javascript-typescript)` must be green |
+| Block force pushes | History cannot be rewritten |
+| Block deletion | `main` cannot be deleted |
+
+> The required check names are the **job names** in `ci.yml`. Rename a job and the gate silently
+> waits forever for a check that no longer exists.
+
+### 4.5 Projects — seeing the whole board
+
+GitHub **Projects** turns the issues above into a board (Todo / In progress / Done) or a table with
+custom fields like size and iteration. Issues and PRs stay the single source of truth; the Project is
+a *view* over them, so moving a card never loses the discussion attached to the issue.
+
+---
+
+## 5. Security
+
+Three different layers, each catching something the others cannot.
+
+```mermaid
+flowchart TD
+    A["🤖 Dependabot<br/>scans dependencies"] --> A1["Opens PRs to bump<br/>vulnerable/outdated packages"]
+    B["🔎 CodeQL<br/>scans our source"] --> B1["Flags injection, XSS,<br/>unsafe patterns"]
+    C["🔑 Encrypted secrets<br/>stores credentials"] --> C1["Keys injected at runtime,<br/>never committed"]
+
+    style A fill:#e8f0fe,stroke:#4285f4
+    style B fill:#fce8e6,stroke:#ea4335
+    style C fill:#e6f4ea,stroke:#34a853
+```
+
+**Dependabot** (`.github/dependabot.yml`) checks `backend/` and `frontend/` weekly. It is already
+working — see open PRs **#19, #20, #21** bumping `express`, `dotenv` and `jsdom`. Each one runs the
+full CI suite, so you can see immediately whether the upgrade breaks anything.
+
+**CodeQL** is the `analyze` job in `ci.yml`. It builds a queryable database of the code and hunts for
+vulnerability patterns on every push and PR, plus weekly.
+
+**Secrets** are encrypted repository settings, write-only — once saved, nobody can read them back,
+and Actions masks them in logs.
+
+| Secret | Used by | Purpose |
 | --- | --- | --- |
-| `ghcr.io/<owner>/<repo>-backend` | `node:24-alpine` | Express API on port 3000, runs as the non-root `node` user |
-| `ghcr.io/<owner>/<repo>-frontend` | `nginx:1.27-alpine` | Static dashboard on port 8080 |
+| `AZURE_MAPS_KEY` | CI + CD | Azure Maps subscription key |
+| `AZURE_CREDENTIALS` | CD | Service principal that deploys to Azure |
 
-The frontend container serves the static files **and reverse-proxies `/api` to the backend**, with the
-backend address injected as `BACKEND_URL` at container start. That keeps the dashboard same-origin
-with the API, so `app.js` needs no build-time configuration, there is no CORS to manage, and the
-Azure Maps key never leaves the backend.
+> **The golden rule: a secret never lands in git.** Not in code, not in a config file, not in a
+> commit "temporarily". Git history is forever — removing it later does not un-leak it.
 
-### One-time setup
+---
 
-1. Create the resource group and a deployment service principal. The pipe means the credential is
-   written straight into the GitHub secret and never printed:
+## 6. The pipeline (CI/CD)
 
-   ```powershell
-   az group create -n rg-gh900-weather -l southeastasia
-   $sub = az account show --query id -o tsv
-   az ad sp create-for-rbac --name gh900-weather-deploy --role contributor `
-     --scopes "/subscriptions/$sub/resourceGroups/rg-gh900-weather" --json-auth |
-     gh secret set AZURE_CREDENTIALS --repo <owner>/<repo>
-   ```
+**Continuous Integration (CI)** — every change is automatically built and tested, so problems are
+found in minutes rather than at release time.
 
-   The service principal is Contributor **on that resource group only**, so it cannot create the
-   group or register resource providers. Both are one-time steps for a subscription owner:
+**Continuous Deployment (CD)** — a change that passes everything is automatically released, so
+shipping is routine instead of an event.
 
-   ```powershell
-   az provider register -n Microsoft.App
-   az provider register -n Microsoft.OperationalInsights
-   ```
+```mermaid
+flowchart TD
+    PR["Pull request"] --> CI
+    PUSH["Push to main"] --> CI
 
-2. Add the Azure Maps key as a secret so the backend container can read it:
+    subgraph CI["⚙️ ci.yml — quality gates"]
+        direction LR
+        T1["Backend tests<br/>35 tests"]
+        T2["Frontend tests<br/>13 tests"]
+        T3["CodeQL<br/>security scan"]
+    end
 
-   ```powershell
-   gh secret set AZURE_MAPS_KEY --repo <owner>/<repo>
-   ```
+    CI --> Q{"All green?"}
+    Q -->|no| BLOCK["❌ Merge blocked"]
+    Q -->|"yes, and on main"| CD
 
-3. After the first successful run, make both packages public:
-   *Repository → Packages → select the package → Package settings → Change visibility → Public.*
-   Container Apps then pulls the images anonymously, with no registry credentials to manage.
+    subgraph CD["🚀 cd.yml — release"]
+        direction LR
+        D1["images<br/>build + push to GHCR"] --> D2["provision<br/>Container Apps env"]
+        D2 --> D3["deploy-backend"] --> D4["deploy-frontend"] --> D5["smoke-test"]
+    end
 
-| Secret / variable | Required | Purpose |
-| --- | --- | --- |
-| `AZURE_CREDENTIALS` (secret) | yes | Service principal JSON used by `azure/login` |
-| `AZURE_MAPS_KEY` (secret) | yes | Passed to the backend container as a Container Apps secret |
-| `AZURE_RESOURCE_GROUP` (variable) | no | Defaults to `rg-gh900-weather` |
-| `AZURE_LOCATION` (variable) | no | Defaults to `southeastasia` |
-| `AZURE_CONTAINERAPP_ENV` (variable) | no | Defaults to `cae-gh900-weather` |
+    CD --> LIVE["🌏 Live in Azure"]
 
-The `deploy` job targets the `production` GitHub environment, so you can add required reviewers there
-if you want a manual approval before release.
+    style BLOCK fill:#fce8e6,stroke:#ea4335,stroke-width:2px
+    style LIVE fill:#e6f4ea,stroke:#34a853,stroke-width:2px
+```
 
-## Configuration
+### Why two workflow files?
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `AZURE_MAPS_KEY` | yes | — | Azure Maps shared key (legacy name `AZURE_MAPS_SUBSCRIPTION_KEY` still works) |
-| `PORT` | no | `3000` | Local listen port |
-| `AZURE_MAPS_BASE_URL` | no | `https://atlas.microsoft.com` | Azure Maps host |
-| `AZURE_MAPS_GEOCODE_API_VERSION` | no | `2025-01-01` | Geocoding API version |
-| `AZURE_MAPS_WEATHER_API_VERSION` | no | `1.1` | Weather API version |
-| `WEATHER_UNITS` | no | `metric` | `metric` or `imperial` |
-| `HTTP_TIMEOUT_MS` | no | `8000` | Per-call timeout to Azure Maps |
+`needs:` — the keyword that makes one job wait for another — **only works inside a single workflow
+file.** Since deployment lives in `cd.yml`, it cannot `needs:` the test jobs in `ci.yml`. The link is
+a `workflow_run` trigger instead: CD starts only when CI **completes successfully on `main`**. Inside
+`cd.yml`, the five stages still chain with `needs:`.
 
-## Endpoints
+### Things that will bite you
+
+| Gotcha | What we did |
+| --- | --- |
+| In a `workflow_run`, `github.sha` is the branch head, **not** the commit that was tested | Carry `workflow_run.head_sha` through as `DEPLOY_SHA` |
+| The weekly CodeQL run also "completes CI" and would redeploy | Only deploy when the CI run came from a `push` |
+| Two deployments overlapping | A `concurrency` group that queues instead of cancelling |
+| `ghcr.io` rejects uppercase image names (this repo has capitals!) | `docker/metadata-action` lowercases them |
+| The deploy identity is scoped to one resource group | It cannot create the group; that is one-time manual setup |
+
+### One-time setup (already done for this repo)
+
+```powershell
+# 1. Resource group + deployment identity. The pipe means the credential is written
+#    straight into the GitHub secret and is never displayed or saved to disk.
+az group create -n rg-gh900-weather -l southeastasia
+$sub = az account show --query id -o tsv
+az ad sp create-for-rbac --name gh900-weather-deploy --role contributor `
+  --scopes "/subscriptions/$sub/resourceGroups/rg-gh900-weather" --json-auth |
+  gh secret set AZURE_CREDENTIALS --repo <owner>/<repo>
+
+# 2. The Azure Maps key
+gh secret set AZURE_MAPS_KEY --repo <owner>/<repo>
+```
+
+After the first successful run, make both packages public:
+*Repository → Packages → select package → Package settings → Change visibility → Public.*
+Container Apps then pulls the images anonymously, with no registry credentials to manage.
+
+---
+
+## 7. Reference
+
+### Endpoints
 
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/health` | Liveness check |
-| GET | `/api/cities` | Reference data (flag, coordinates, time zone) for the supported cities |
-| GET | `/api/weather?city={city}&country={country}` | Current weather for one supported city |
-| GET | `/api/weather/:city` | Same, with the city in the path |
+| GET | `/api/cities` | Supported cities with flag, coordinates, time zone |
 | GET | `/api/weather` | Current weather for every supported city |
-| GET | `/api/forecast/:city?days={1-10}` | Daily forecast, `days` defaults to 5 |
-
-| City id | City | Country |
-| --- | --- | --- |
-| `sydney` | Sydney | Australia |
-| `melbourne` | Melbourne | Australia |
-| `singapore` | Singapore | Singapore |
-| `mumbai` | Mumbai | India |
-| `new-delhi` | New Delhi | India |
-| `manila` | Manila | The Philippines |
-| `cape-town` | Cape Town | South Africa |
-
-The city is matched against this allowlist, so caller input is never forwarded to Azure Maps.
-`country` is optional and accepts the country name or its ISO code (`PH`, `philippines`,
-`The Philippines`). Errors are returned as `{ "error": { "code", "message" } }`:
-
-| Case | Status | Code |
-| --- | --- | --- |
-| `city` missing or blank | `400` | `CITY_REQUIRED` |
-| Unsupported city | `404` | `CITY_NOT_SUPPORTED` |
-| Unsupported country | `404` | `COUNTRY_NOT_SUPPORTED` |
-| Supported city that is not in the requested country | `400` | `CITY_COUNTRY_MISMATCH` |
-| `days` outside 1-10 | `400` | `DAYS_INVALID` |
-
-Azure Maps only accepts a `duration` of 1, 5, 10, 15, 25 or 45 days, so `/api/forecast` asks for the
-smallest supported duration that covers `days` and trims the result. A 7-day request is therefore one
-call with `duration=10`.
+| GET | `/api/weather/:city` | Current weather for one city |
+| GET | `/api/forecast/:city?days=1-10` | Daily forecast (defaults to 5) |
 
 ```bash
-curl http://localhost:3000/health
 curl http://localhost:3000/api/cities
-curl "http://localhost:3000/api/weather?city=mumbai&country=India"
 curl http://localhost:3000/api/weather/sydney
-curl http://localhost:3000/api/weather
+curl "http://localhost:3000/api/forecast/mumbai?days=7"
 ```
 
-`GET /api/weather?city=mumbai` responds with:
+Supported city ids: `sydney`, `melbourne`, `singapore`, `mumbai`, `new-delhi`, `manila`, `cape-town`.
+An unknown id returns `404` with the list of valid ids.
 
-```json
-{
-  "city": {
-    "id": "mumbai",
-    "displayName": "Mumbai",
-    "countryRegion": "IN",
-    "countryName": "India",
-    "flag": "🇮🇳",
-    "coordinates": { "latitude": 19.076, "longitude": 72.8777 },
-    "timeZone": "Asia/Kolkata"
-  },
-  "location": {
-    "latitude": 19.076,
-    "longitude": 72.8777,
-    "formattedAddress": "Mumbai, Maharashtra, India",
-    "confidence": "High"
-  },
-  "current": {
-    "observedAt": "2026-09-02T15:08:00+08:00",
-    "phrase": "Cloudy",
-    "temperature": { "value": 31.4, "unit": "C" },
-    "feelsLike": { "value": 36.1, "unit": "C" },
-    "temperatureRange": {
-      "minimum": { "value": 27.2, "unit": "C" },
-      "maximum": { "value": 33.8, "unit": "C" }
-    },
-    "humidityPercent": 75,
-    "wind": { "speed": { "value": 3.6, "unit": "km/h" }, "directionDegrees": 315, "directionLabel": "NW" }
-  },
-  "retrievedAt": "2026-09-02T08:08:12.345Z"
-}
-```
+### Configuration
 
-`GET /api/weather` uses `Promise.allSettled`, so one failing city is reported in `errors` instead of
-failing the whole response.
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `AZURE_MAPS_KEY` | yes | — | Azure Maps subscription key |
+| `PORT` | no | `3000` | Local listen port |
+| `WEATHER_UNITS` | no | `metric` | `metric` or `imperial` |
+| `HTTP_TIMEOUT_MS` | no | `8000` | Per-call timeout to Azure Maps |
 
-## Dashboard
-
-Start the backend and open <http://localhost:3000/> — Express serves the dashboard from `frontend/`,
-so it is same-origin with the API.
-
-Cities are grouped under their country with the national flag, and each card shows the current
-temperature plus a weather emoji derived from the Azure Maps `iconCode`. The layout is Bootstrap 5
-(CDN, with an SRI hash): one card per row on mobile, two from 768px, three from 1200px.
-
-Clicking a city opens its detail view at `#/city/<id>`, which adds the condition description,
-min/max temperature over the last 24 hours, humidity, cloud cover, wind, UV index and visibility,
-plus the city plotted on a [Leaflet](https://leafletjs.com/) map with OpenStreetMap tiles, and a
-**5-day / 7-day forecast** (fetched once at 7 days, so switching between them needs no new request).
-"← Back to dashboard" and the browser Back button both return to the grid.
-
-The header has a light/dark theme toggle built on Bootstrap's `data-bs-theme` colour modes. It
-follows `prefers-color-scheme` on first visit, remembers the choice in `localStorage`, and is applied
-by a tiny inline script before first paint so the page never flashes the wrong theme. In dark mode
-the OpenStreetMap tiles are darkened with a CSS filter, since the dark tile providers now require
-their own API key.
-
-Leaflet is used rather than the Azure Maps Web SDK because the Web SDK needs a credential in the
-browser; OpenStreetMap tiles need none, so the subscription key stays on the server.
-
-The page calls only `/api/cities`, `/api/weather`, `/api/weather/:city` and `/api/forecast/:city`.
-It never talks to Azure Maps directly.
-
-Flags are rendered as images from `flagcdn.com` rather than 🇦🇺-style emoji, because Windows renders
-regional-indicator emoji as plain letters ("AU"), which would show a text acronym instead of a flag.
-
-## Project layout
+### Project layout
 
 ```
-frontend/       dashboard served statically by the backend
-  index.html    Bootstrap layout, card templates and the detail view
-  app.js        hash routing, data fetching, country grouping, Leaflet map
-  styles.css    flat card styling on top of Bootstrap
-  test/         jsdom suites for rendering and navigation
+.github/
+  workflows/ci.yml     tests + CodeQL
+  workflows/cd.yml     build images + deploy to Azure
+  dependabot.yml       weekly dependency updates
 backend/
-  src/
-    config/     env parsing + the supported-city reference data / allowlist
-    services/   Azure Maps client, geocoding, weather, orchestration
-    routes/     health, cities, weather
-    middleware/ async wrapper + central error handler
-    app.js      Express app (no listen, so tests can import it)
-    server.js   config check, listen, graceful shutdown
-  test/         node:test suites with a stubbed fetch
+  src/config/          env parsing + supported-city allowlist
+  src/services/        Azure Maps client, geocoding, weather, forecast
+  src/routes/          health, cities, weather, forecast
+  src/app.js           Express app (no listen, so tests can import it)
+  test/                35 tests, stubbed fetch
+  Dockerfile           node:24-alpine, runs as non-root
+frontend/
+  index.html app.js styles.css
+  nginx.conf.template  static files + /api proxy
+  test/                13 jsdom tests
+  Dockerfile           nginx:1.27-alpine
 ```
+
+### Glossary
+
+| Term | Meaning |
+| --- | --- |
+| **Branch** | An isolated line of work; cheap to create, safe to break |
+| **Pull request** | A request to merge a branch, plus review and checks |
+| **Workflow** | An automation file in `.github/workflows/` |
+| **Job / step** | A workflow runs jobs; a job runs steps. Jobs can run in parallel |
+| **Runner** | The machine executing a job (here, GitHub-hosted `ubuntu-latest`) |
+| **Artifact / image** | The packaged output; here, container images in GHCR |
+| **Secret** | Encrypted, write-only configuration injected at runtime |
+| **Ruleset** | Enforced rules on a branch, e.g. required checks |
