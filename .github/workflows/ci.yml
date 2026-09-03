@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '27 3 * * 1'
 
 permissions:
   contents: read
@@ -13,6 +15,11 @@ permissions:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_PORT: '3000'
+  FRONTEND_PORT: '8080'
 
 jobs:
   backend:
@@ -62,3 +69,188 @@ jobs:
 
       - name: Run frontend tests
         run: npm test
+
+  # Lives here rather than in its own workflow because `needs:` cannot cross workflows,
+  # and the release jobs below must wait for the security scan.
+  # The job name sets the check name ("Analyze (javascript-typescript)") that the main
+  # ruleset requires, and matches the name CodeQL default setup produces.
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # No compilation step: the app is plain JavaScript.
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  images:
+    name: Push ${{ matrix.component }} image
+    needs: [backend, frontend, analyze]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        component: [backend, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GitHub Packages
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # metadata-action lowercases the repository name, which ghcr.io requires.
+          images: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.component }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Container Apps
+    needs: images
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    environment: production
+
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-gh900-weather' }}
+      LOCATION: ${{ vars.AZURE_LOCATION || 'southeastasia' }}
+      ENVIRONMENT_NAME: ${{ vars.AZURE_CONTAINERAPP_ENV || 'cae-gh900-weather' }}
+      BACKEND_APP: gh900-weather-backend
+      FRONTEND_APP: gh900-weather-frontend
+
+    steps:
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Resolve image references
+        id: images
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "backend=${REGISTRY}/${repo}-backend:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${REGISTRY}/${repo}-frontend:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure the Container Apps environment exists
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            set -euo pipefail
+            az config set extension.use_dynamic_install=yes_without_prompt
+            az group create -n "$RESOURCE_GROUP" -l "$LOCATION" -o none
+            if ! az containerapp env show -n "$ENVIRONMENT_NAME" -g "$RESOURCE_GROUP" -o none 2>/dev/null; then
+              az containerapp env create -n "$ENVIRONMENT_NAME" -g "$RESOURCE_GROUP" -l "$LOCATION" -o none
+            fi
+
+      - name: Deploy the backend
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            set -euo pipefail
+            IMAGE='${{ steps.images.outputs.backend }}'
+            if az containerapp show -n "$BACKEND_APP" -g "$RESOURCE_GROUP" -o none 2>/dev/null; then
+              az containerapp secret set -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+                --secrets azure-maps-key="${{ secrets.AZURE_MAPS_KEY }}" -o none
+              az containerapp update -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+                --image "$IMAGE" --set-env-vars AZURE_MAPS_KEY=secretref:azure-maps-key -o none
+            else
+              az containerapp create -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+                --environment "$ENVIRONMENT_NAME" --image "$IMAGE" \
+                --target-port "$BACKEND_PORT" --ingress external \
+                --secrets azure-maps-key="${{ secrets.AZURE_MAPS_KEY }}" \
+                --env-vars AZURE_MAPS_KEY=secretref:azure-maps-key \
+                --min-replicas 1 --max-replicas 3 -o none
+            fi
+
+      - name: Deploy the frontend
+        id: frontend
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            set -euo pipefail
+            IMAGE='${{ steps.images.outputs.frontend }}'
+            BACKEND_FQDN=$(az containerapp show -n "$BACKEND_APP" -g "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn -o tsv)
+
+            # nginx proxies /api to this address, keeping the dashboard same-origin.
+            if az containerapp show -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" -o none 2>/dev/null; then
+              az containerapp update -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
+                --image "$IMAGE" --set-env-vars "BACKEND_URL=https://${BACKEND_FQDN}" -o none
+            else
+              az containerapp create -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
+                --environment "$ENVIRONMENT_NAME" --image "$IMAGE" \
+                --target-port "$FRONTEND_PORT" --ingress external \
+                --env-vars "BACKEND_URL=https://${BACKEND_FQDN}" \
+                --min-replicas 1 --max-replicas 3 -o none
+            fi
+
+            FRONTEND_FQDN=$(az containerapp show -n "$FRONTEND_APP" -g "$RESOURCE_GROUP" \
+              --query properties.configuration.ingress.fqdn -o tsv)
+            echo "url=https://${FRONTEND_FQDN}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test the deployment
+        run: |
+          set -euo pipefail
+          url='${{ steps.frontend.outputs.url }}'
+          for attempt in $(seq 1 10); do
+            if curl -fsS "${url}/api/cities" >/dev/null; then
+              echo "Dashboard is live at ${url}"
+              echo "### Deployed: ${url}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Attempt ${attempt} failed, retrying in 15s"
+            sleep 15
+          done
+          echo "The deployment did not become healthy in time" >&2
+          exit 1

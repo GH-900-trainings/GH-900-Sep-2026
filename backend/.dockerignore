@@ -1,0 +1,8 @@
+node_modules
+test
+test-utils
+.env
+.env.*
+*.md
+Dockerfile
+.dockerignore

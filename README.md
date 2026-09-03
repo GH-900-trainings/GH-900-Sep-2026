@@ -62,6 +62,7 @@ on `ubuntu-latest`, as two parallel jobs:
 | --- | --- |
 | **Backend tests** | `npm ci` then `npm test` in `backend/`, with `AZURE_MAPS_KEY` from repository secrets |
 | **Frontend tests** | `npm ci` then `npm test` in `frontend/` |
+| **Analyze (javascript-typescript)** | CodeQL security analysis |
 
 Both jobs cache npm downloads with `actions/setup-node`'s `cache: npm`, keyed on that package's
 `package-lock.json`.
@@ -76,16 +77,76 @@ ruleset too.
 | File | Purpose |
 | --- | --- |
 | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly npm update PRs for `backend/` and `frontend/` |
-| [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml) | CodeQL analysis on every push and pull request to `main`, plus a weekly run |
+| `analyze` job in [`ci.yml`](.github/workflows/ci.yml) | CodeQL analysis on every push and pull request to `main`, plus a weekly run |
 
 The ruleset requires three checks before a merge into `main`: **Backend tests**, **Frontend tests**
 and **Analyze (javascript-typescript)** (CodeQL).
 
-> **Before merging `codeql.yml`, turn off CodeQL *default setup***
+CodeQL lives inside `ci.yml` rather than its own workflow because `needs:` cannot span workflows, and
+the release jobs must wait for the security scan.
+
+> **Before merging, turn off CodeQL *default setup***
 > (*Settings → Code security → Code scanning → Default setup → Disable*). GitHub refuses to accept
 > results from a committed CodeQL workflow while default setup is enabled, so the analysis job would
 > fail. The workflow deliberately produces the same check name that default setup produces, so the
 > required check keeps passing across the switch.
+
+## Containers and deployment
+
+`main` builds two images and deploys them to Azure Container Apps. The release jobs use `needs:` so
+they only start after **Backend tests**, **Frontend tests** and **CodeQL** have all succeeded:
+
+```
+backend ─┐
+frontend ─┼─> images (build + push to GHCR) ─> deploy (Container Apps)
+analyze ─┘
+```
+
+`images` and `deploy` are skipped on pull requests — they only run on a push to `main`.
+
+| Image | Base | Serves |
+| --- | --- | --- |
+| `ghcr.io/<owner>/<repo>-backend` | `node:24-alpine` | Express API on port 3000, runs as the non-root `node` user |
+| `ghcr.io/<owner>/<repo>-frontend` | `nginx:1.27-alpine` | Static dashboard on port 8080 |
+
+The frontend container serves the static files **and reverse-proxies `/api` to the backend**, with the
+backend address injected as `BACKEND_URL` at container start. That keeps the dashboard same-origin
+with the API, so `app.js` needs no build-time configuration, there is no CORS to manage, and the
+Azure Maps key never leaves the backend.
+
+### One-time setup
+
+1. Create the resource group and a deployment service principal. The pipe means the credential is
+   written straight into the GitHub secret and never printed:
+
+   ```powershell
+   az group create -n rg-gh900-weather -l southeastasia
+   $sub = az account show --query id -o tsv
+   az ad sp create-for-rbac --name gh900-weather-deploy --role contributor `
+     --scopes "/subscriptions/$sub/resourceGroups/rg-gh900-weather" --json-auth |
+     gh secret set AZURE_CREDENTIALS --repo <owner>/<repo>
+   ```
+
+2. Add the Azure Maps key as a secret so the backend container can read it:
+
+   ```powershell
+   gh secret set AZURE_MAPS_KEY --repo <owner>/<repo>
+   ```
+
+3. After the first successful run, make both packages public:
+   *Repository → Packages → select the package → Package settings → Change visibility → Public.*
+   Container Apps then pulls the images anonymously, with no registry credentials to manage.
+
+| Secret / variable | Required | Purpose |
+| --- | --- | --- |
+| `AZURE_CREDENTIALS` (secret) | yes | Service principal JSON used by `azure/login` |
+| `AZURE_MAPS_KEY` (secret) | yes | Passed to the backend container as a Container Apps secret |
+| `AZURE_RESOURCE_GROUP` (variable) | no | Defaults to `rg-gh900-weather` |
+| `AZURE_LOCATION` (variable) | no | Defaults to `southeastasia` |
+| `AZURE_CONTAINERAPP_ENV` (variable) | no | Defaults to `cae-gh900-weather` |
+
+The `deploy` job targets the `production` GitHub environment, so you can add required reviewers there
+if you want a manual approval before release.
 
 ## Configuration
 
